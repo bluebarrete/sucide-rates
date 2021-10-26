@@ -1,0 +1,635 @@
+---
+title: Model on Suicide Analysis and Prediction
+author: '"Ming Chu Cheng(Miranda), Wanying Li, Tal Jacobi, Jayant Bishnoi"'
+date: "5/5/2021"
+output: 
+html_document:
+  df_print: paged
+  pdf_document: default
+ 
+---
+
+```{r setup, include=FALSE, warning = FALSE, message = FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+
+library(tidyverse);library(modelr);library(readxl);library(readr);library(splines);library(lubridate);library(dplyr);library(purrr);library(tidyr);library(hexbin);library(scales);library(formattable);library(ggplot2);library(party);library(stringr);library(gridExtra);library(broom);library(ggalt);library(GGally);library(psych);library(rpart.plot);library(rpart);library(kableExtra);library(pixiedust);library(caret); library(car)
+
+```
+
+## STA 9750 Final Project
+
+
+### Introduction 
+
+
+Nowadays, people are intelligent and continuously seeking a high quality of life. At the same time, people are also faced with an enormous amount of pressure such as the cost of living, workload, relationships, even freedom.... etc.  When people feel helpless, depressed and hopeless, they would contemplate ending their life in order to ease their unhappiness.  The topic of suicide is always a complicated subject within society.  Therefore, we try to use different features to explore the topic of suicide by using multiple linear regression and modeling analysis.  We wish many people would contemplate the consequence of suicide and hope the result of suicide analysis could help some Governors' awareness and decision making through various means of advertising. 
+
+There are in total of five data sources for our project analysis and prediction, including master.csv, gdp.csv, CPI_total.csv, Unemployment_total_data.csv and Happiness.csv. All the resource comes from World Bank and Kaggle. The largest data sets of Suicides (master) has 27820 rows and 10 columns which contains historical data from 1985 to 2016. As we hope our data analysis has more diversification and accuracy, we find more component data sets and join them together to become our new data sets, encompassing historical data from 1985 to 2020.  As the data in earlier years and some countries are relatively scarce and drop all NA, we select an analysis time frame from 2009 to 2015 which has 2940 observations and 28 columns which is called complete_join for our main data set. The complete_join data set comprises many global market index and rates. Consequently, we select different types of components to perform deep analysis and prediction, such as Suicides per 100k, our dependent variable. Population, GDP, CPI, Unemployment Rate, Social support, Freedom to make life choice, Perceptions of corruption, Confidence in national government, Democratic quality are our predictors. Order data cleaning procedures includes conversion of column types from the csv file, removal of unnecessary symbol, rename column name and pivot_longer the column and value and then join them together.  
+
+
+```{r generate dataset, echo=FALSE, warning = FALSE, include = FALSE,cache = TRUE }
+
+# Input the data sets
+
+master <- read_csv("master.csv")
+gdp <- read_csv("gdp.csv")
+CPI_total <- read_csv("CPI_total.csv")
+unemployment_total_data <- read_csv("unemployment_total_data.csv")
+happiness <- read_csv("Happiness.csv")
+
+
+
+# Tidy the data sets (Using pivot_long to transpose the column)
+
+
+pivot_cpi <- as_tibble(CPI_total) %>%
+  pivot_longer(c(`1960`:`2020`), names_to = "Year", values_to = "CPI_Index")
+
+pivot_gdp <- as_tibble(gdp) %>%
+  pivot_longer(c(`1960`:`2020`), names_to = "Year", values_to = "GDP_Rate")
+
+pivot_unemployment <- as_tibble(unemployment_total_data) %>%
+  pivot_longer(c(`1985`:`2016`), names_to = "Year", values_to = "Unemployment_Rate")
+
+
+# Group_by data set
+
+ suicide_groupby <- as.data.frame (master, stringsAsFactors = FALSE) %>%
+  select (Country, Year, Sex, Age, Suicides_no, Population, Suicides_100k_pop, Generation)
+ 
+cpi_groupby <- as.data.frame(pivot_cpi, stringsAsFactors = FALSE) %>% 
+  select(Country, Year, CPI_Index)
+
+unemployment_groupby <- as.data.frame(pivot_unemployment, stringsAsFactors = FALSE)%>% 
+  select(Country, Year, Unemployment_Rate)
+
+gdp_groupby <- as.data.frame(pivot_gdp, stringsAsFactors = FALSE)%>% 
+  select(Country, Year, GDP_Rate)
+
+
+# Combining data sets
+
+join_cpi_unemployment <- cpi_groupby %>%  
+  full_join(unemployment_groupby, By="Year")%>% drop_na()
+
+join_cpi_unemployment_GDP <- join_cpi_unemployment %>%  
+  full_join(gdp_groupby, By="Year")  %>% drop_na()
+
+
+join_happiness_suicide <- suicide_groupby %>%  
+  left_join(happiness, By="Country") %>% 
+  select(Country, Year, everything()) %>% drop_na()
+  
+
+half_Join <- join_cpi_unemployment_GDP %>% 
+  mutate(Year = as.numeric(Year)) %>% drop_na()
+
+
+complete_join <- join_happiness_suicide  %>%  
+  left_join(half_Join, By="Country") %>% 
+   mutate(Age = str_remove_all(Age, "years")) %>% drop_na()
+
+
+```
+
+
+### Summary of the suicides rate of the countries from 2009 to 2015
+
+
+The summary chart provides some summary statistics of our analysis data set.  It has contained 9 predictors and the dependent variables (suicide 100k pop) average, median and standard deviation.  The table starts with descending by the suicide 100k pop.  We can see that most of the top ten suicide rate countries is in Europe or near Europe.  The highest average rate of suicides per 100K people is the Lithuania country.  Comparing with the United States, Lithuania has 2.5 times of average of per 100k people.  But its population is less than the United States 6 times.  Meanwhile, comparing with others top nine countries, they also have 1.3 – 1.85 times higher comparing with the United States‘ average of per 100k people.  It seems that most people in these counties, are feeling helpless and hopeless every day.
+
+
+
+
+```{r summary table, include = TRUE,echo=FALSE, warning=FALSE, message=FALSE, cache = TRUE }
+options(scipen =1, digits =2, big.mark = ",")
+
+summary_datasets <- complete_join %>% group_by (Country) %>% 
+  summarize( n = n(), 
+  Avg_S = mean(Suicides_100k_pop), Median_S = median(Suicides_100k_pop),SD_S = sd(Suicides_100k_pop), 
+  Avg_P = mean(Population), Median_P = median(Population), SD_P = sd(Population),
+  Avg_CPI = mean(CPI_Index), Median_CPI = median(CPI_Index), SD_CPI = sd(CPI_Index),
+  Avg_U = mean(Unemployment_Rate), Median_U = median(Unemployment_Rate), SD_U = sd(Unemployment_Rate), 
+  Avg_GDP = mean(GDP_Rate), Median_GDP = median(GDP_Rate), SD_GDP = sd(GDP_Rate),
+  Avg_SS = mean(Social_support), Median_SS = median(Social_support), SD_SS= sd(Social_support),
+  Avg_FTMLC = mean(Freedom_to_make_life_choices),
+  Median_FTMLC = median(Freedom_to_make_life_choices),
+  Sd_FTMLC = sd(Freedom_to_make_life_choices),
+  Mean_PC = mean(Perceptions_of_corruption), 
+  Median_PC = median(Perceptions_of_corruption),
+  SD_PC = sd(Perceptions_of_corruption),
+  Avg_CG  = mean(Confidence_in_national_government),
+   Median_CG = median(Confidence_in_national_government),
+   SD_CG = sd(Confidence_in_national_government),
+  Avg_DQ = mean(Democratic_Quality),
+  Median_DQ = median(Democratic_Quality),
+  SD_DQ = sd(Democratic_Quality))
+  
+
+summary_datasets <- summary_datasets %>%
+  arrange(desc(Avg_S))
+
+#knitr::kable(summary_datasets)
+```
+
+
+
+```{r display tibble, include = TRUE, echo=FALSE, warning=FALSE, message=FALSE, cache = TRUE, big.mark = ",", digits =2, fig.align = "center"}
+
+kbl(summary_datasets) %>%
+  kable_classic() %>%
+  add_header_above(., c(" ", `Sample Size`  = 1, `Suicides 100k pop` = 3, `Population` = 3, `CPI Index` = 3, `Unemployment Rate` = 3, `GDP Rate` = 3,`Social Support` = 3, `Freedom To Make Life Choice` = 3,`Perceptions Of Corruption` = 3,`Confidence In National Government` = 3,`Democratic Quality` = 3)) %>% kable_paper() %>%
+  scroll_box(width = "900px", height = "690px")
+
+```
+
+
+
+### Proportion of Global Sex
+
+
+Global suicides per 100k bar chart presents the proportion of gender of global suicides per 100k people.  It obviously shows that a man is higher pone of ending their life than female.  Most importantly, there is a big ratio occurrence. Approximately, the ratio is (1:4).  It means for every 1 female contemplating suicide globally, it has 4 males that are thinking suicide, from 2009 to 2015.  What’s the thought on why a male is contemplating negative thinking than a female in the world?  What factors causes many males to end their precious life?  We will explore the data in depth; we will discover the reasons.  
+
+Besides, we also did an analysis of gender by year.  Both male and female suicide rates peaked in 2010.  Surprisingly, male suicide rates sharply increased two years from 2011 to 2013. Instead, female suicide rates increased slowly for two years. It might relate to the global economic crisis in 2011.  Many people's wealth suddenly decreased significantly after August 8, 2011.  After 2013, some factors might have changed their mindset and encouraged them not to give up their life.  Or some factors might give them hope in order to build up their courage to live in the world.
+
+
+
+
+```{r include = TRUE, echo = FALSE, warning = FALSE, message = FALSE, cacah = TRUE,  purl = TRUE, fig.height = 6, fig.width =10, fig.align = "center"}
+
+global_sex  <- complete_join %>%
+  group_by(Sex) %>%
+  summarize(Suicide_per_100k = (sum(as.numeric (Suicides_no)) / sum(as.numeric(Population))) * 100000) %>%
+  ggplot(aes(x = Sex, y = Suicide_per_100k, fill = Sex)) + 
+  geom_bar(stat = "identity") + 
+  labs(title = "Global suicides per 100k by Sex",
+       x = "Sex", 
+       y = "Suicides per 100k") +
+  theme(legend.position = "none") + 
+  scale_y_continuous(breaks = seq(0, 25), minor_breaks = FALSE )
+
+
+global_sex_time <- complete_join %>%
+  group_by(Year, Sex) %>%
+  summarize(Suicide_per_100k = (sum(as.numeric(Suicides_no)) / sum(as.numeric(Population))) * 100000) %>%
+  ggplot(aes(x = Year, y = Suicide_per_100k, col = factor(Sex))) + 
+  facet_grid(Sex ~ ., scales = "free_y") + 
+  geom_line() + 
+  geom_point() + 
+  labs(title = "Trends Over Time, by Sex", 
+       x = "Year", 
+       y = "Suicides per 100k", 
+       color = "Sex") + 
+  theme(legend.position = "none") + 
+  scale_x_continuous(breaks = seq(2009, 2015, 5), minor_breaks = F)
+
+grid.arrange(global_sex,global_sex_time , ncol = 2)
+
+
+```
+
+   
+### Distribution of Global Age
+
+We use a boxplot to analyze age.  From the box plots, we can see the age distribution for different groups of age.  The thick line in the middle of the box indicates the median suicides per 100K people (Suicides_100k-pop) for the age group, the bottom of the box is the lower quartile, and the top of the box is the upper quartile.  The endpoints represent the smallest and largest suicides per 100K people values, excluding outliers, which are represented by the dots.  
+
+In the boxplot, we can see that group 35–54 and group 55-74 have very close 50% (median) of all respondent suicides per 100 people rate lower than 8 rates. Also, they also have similar 75% (upper quartile) of all respondent rate lower than 20 rates.  For the group over 75 age, we can identify that the median of over 75 age is approximately 12.5 rates, the upper quartile is 26.5 rates.  Overall, in the different group of age it appears we have many potential outliers in different group of ages.  
+
+
+```{r Display Age Boxplot, include = TRUE, echo = FALSE, warning=FALSE,message = FALSE, cache = TRUE, purl = FALSE, fig.height = 5, fig.width =5, fig.align = "center"}
+
+age_boxplot <- ggplot(complete_join, aes(x=reorder(Age,Suicides_100k_pop, na.rm = TRUE), y=Suicides_100k_pop)) +
+  geom_boxplot() +
+  labs(title = " Suicides per 100K people VS Age", y="Suicides_100k_pop", x="Age") 
+
+
+age_boxplot + scale_y_continuous(breaks=seq(0,150,5))
+
+```
+
+
+### Multiple linear Regression
+
+
+We use a statistical technique - multiple linear regression to do several explanatory predictors to predict the outcome of a dependent variable which is Suicide_100k-pop.  This multiple linear regression is regressed on the following nine predictors: xi1: Population, xi2: CPI_Index, xi3: GDP_Rate, xi4: Unemployment_Rate, xi5: Social_support, xi6: Freedom_to_make_life_choices, xi7: Perceptions_of_corruption, xi8: Confidence_in_national_government, xi9: Democratic_Quality
+
+
+**The multiple regression model:** 
+
+
+\begin{aligned}
+yi = β0 + β1xi1 + β2xi2 +...+ βpxip + ϵ
+\end{aligned}
+
+**Where, for i=n observations:**
+
++ yi = dependent variable
+
++ xi  = explanatory predictors
+
++ β0 = y-intercept
+
++ βp = slope coefficients for each explanatory predictor (Estimate)
+
++ ϵ = the model’s error term (also known as the residuals)
+
+
+
+#### Multiple Linear Regression model VS residual 
+
+
+As the population of average suicides per 100k people is unknown, so we assume that the population of average suicides per 100k people follows a normal distribution N (0, 1).  The epsilon ( ϵ ) is a normally distributed variable centered at zero.  We always hope our sample average in population will meet the population average of the suicides population in order to have high accuracy estimated regression line that is close to true line.  Not exactly the same, but we can use null hypothesis test to know whether our dataset is unbiased. 
+
+After running the linear regression and residual plot, we discover that our model is not close to the normal distribution.  We can see as below residual plot shows that our model has skewness.  Thus, we have to deal with it before doing prediction in order to make our prediction to be more accurate.  
+
+
+
+```{r Multiple linear regression, include = FALSE, echo=FALSE, warning=FALSE, message=FALSE, cache = TRUE}
+
+#After running matrix, we discover that our model is not linear model, we need to use log transformation to improve its performance
+
+linear_suicides <- lm(Suicides_100k_pop ~ Population + CPI_Index + GDP_Rate + Unemployment_Rate + Social_support + Freedom_to_make_life_choices + Perceptions_of_corruption + Confidence_in_national_government+ Democratic_Quality, data = complete_join)
+
+
+summary(linear_suicides)
+
+
+panel.cor <- function(x, y, digits = 2, prefix = "", cex.cor, ...) {
+    usr <- par("usr")
+    on.exit(par(usr))
+    par(usr = c(0, 1, 0, 1))
+    Cor <- abs(cor(x, y)) 
+    txt <- paste0(prefix, format(c(Cor, 0.123456789), digits = digits)[1])
+    if(missing(cex.cor)) {
+        cex.cor <- 0.4 / strwidth(txt)
+    }
+    text(0.5, 0.5, txt,
+         cex = 1 + cex.cor * Cor) 
+}
+
+pairs(~Suicides_100k_pop + Population + CPI_Index + GDP_Rate + Unemployment_Rate + Social_support + Freedom_to_make_life_choices+ Perceptions_of_corruption +Confidence_in_national_government + Democratic_Quality, data = complete_join,upper.panel = panel.cor, lower.panel = panel.smooth, cex.labels = 0.5, font.labels = 1  )
+
+
+plot(linear_suicides)
+ 
+```
+
+
+```{r Multiple linear regression vs residual plot, include = TRUE,echo = FALSE, warning=FALSE, cache = TRUE, fig.height = 6, fig.width = 5, fig.align = "center"}
+
+
+complete_join <- complete_join %>%
+  add_predictions(linear_suicides, "suicide_pred") %>% 
+  add_residuals(linear_suicides, "suicide_resid") 
+
+resid_lm <- ggplot(complete_join, aes(suicide_resid)) + 
+  geom_freqpoly(binwidth = 0.5) + geom_vline(xintercept = 0)+
+  labs(title = "The residual of suicides per 100K people")
+
+plot(resid_lm)
+
+```
+
+
+### Model Comparision
+
+We try to use base log transformation, polynomial regression and log1p transformation to adjust our model. Please see the following plot. We can see that the residual decreases frequently and the distribution of my fitted model moves much closer to the normal distribution N(0,1).  Our prediction will be much better now. 
+
+***linear_suicides:***
+
+
+***y_hat(suicides_100k_pop)  = 7.30 + (-0.000000244)Population + 0.387CPI_Index + 0.0126GDP_Rate +(-0.201)Unemployment_Rate +19.5Social_support + (-17.90)Freedom_to_make_life_choices + 2.14Perceptions_of_corruption + (-6.02)confidence_in_national_government) +5.88Democratic_Quality)***
+
+
+
+***log1p_linear_suicides:***     
+
+***y_hat(suicides_100k_pop)  = 1.797 + (-0.02)Population + (-0.031)CPI_Index  +(-0.043)GDP_Rate +(-0.164)Unemployment_Rate +(4.025)Social_support + (-1.814)Freedom_to_make_life_choices + (-0.65)Perceptions_of_corruption + (-0.938)confidence_in_national_government) +(0.189)Democratic_Quality)***
+
+
+```{r Base Log Transformation,include = FALSE, echo=FALSE, warning=FALSE, message=FALSE, cache = TRUE}
+
+#After working with base log transformation, we discover that our model performance has improved a little.  But not the best performance.  So, we try to use polynomial regression to improve our model.  
+
+non_linear_suicides <- lm(Suicides_100k_pop ~ log(Population) + log(CPI_Index)+log(GDP_Rate)+log(Unemployment_Rate)+log(Social_support)+log(Freedom_to_make_life_choices)+log(Perceptions_of_corruption)+log(Confidence_in_national_government)+log(Democratic_Quality), data = complete_join)
+
+summary(non_linear_suicides)
+
+log_coef <-coef(non_linear_suicides)
+
+View(log_coef)
+
+plot(non_linear_suicides)
+
+```
+
+
+```{r display Base log ggplot, include = FALSE, echo=FALSE, warning=FALSE, message=FALSE}
+
+ggplot(complete_join, aes(Population + CPI_Index + GDP_Rate + Unemployment_Rate + Social_support + Freedom_to_make_life_choices + Perceptions_of_corruption +Confidence_in_national_government + Democratic_Quality, Suicides_100k_pop) ) +
+  geom_point() +
+  stat_smooth(method = lm, formula = y ~ log(x))
+
+```
+
+
+```{r Polynomial Regression , include = FALSE, echo=FALSE, warning=FALSE, message=FALSE, cache = TRUE, big.mark = ",", digits =2 }
+
+# As per our model has curve shape, so we try to use polynomial regression to approach our true line.  
+
+poly_reg_suicides <- lm(Suicides_100k_pop ~ poly(Population + CPI_Index + GDP_Rate + Unemployment_Rate + Social_support + Freedom_to_make_life_choices + Perceptions_of_corruption + Confidence_in_national_government + Democratic_Quality, degress = 2, raw = TRUE), data = complete_join)
+
+summary(poly_reg_suicides)
+
+plot(poly_reg_suicides)
+
+
+```
+
+
+```{r log1p transformation, include = FALSE, echo=FALSE, warning=FALSE, message=FALSE, cache = TRUE}
+
+#After working with log1p, the output of the model performance shows much better than base log.  The residual distant has been adjusted and the model has much close to normal distribution. 
+
+
+log1p_linear_suicides <- lm(log1p(Suicides_100k_pop) ~ log1p(Population) + log1p(CPI_Index)+log1p(GDP_Rate)+log1p(Unemployment_Rate)+log1p(Social_support)+log1p(Freedom_to_make_life_choices)+log1p(Perceptions_of_corruption)+log1p(Confidence_in_national_government)+log1p(Democratic_Quality), data = complete_join)
+ 
+
+summary(log1p_linear_suicides)
+
+summary(log1p_linear_suicides)$r.squared
+
+plot(log1p_linear_suicides)
+
+log1p_coef <-coef(log1p_linear_suicides)
+
+
+
+```
+
+
+```{r comparing residual between linear regression VS Log Transformation, include = TRUE,echo = FALSE, warning=FALSE,cache = TRUE, fig.height = 5, fig.width = 8, fig.align = "center"}
+
+complete_join <- complete_join %>% 
+  gather_residuals(linear_suicides, log1p_linear_suicides)
+
+adjust_resid_log1p <- complete_join %>%
+  filter(abs(resid) < 1.5) %>%
+  ggplot(aes(x = resid, fill = model)) +
+  geom_density(alpha = 0.7) + 
+  scale_fill_brewer(palette = "Set2") +
+  geom_vline(xintercept = 0) + labs(title = "Comparing Residuals Between Linear Regression & Log Transformation")
+
+plot(adjust_resid_log1p)
+
+
+```
+
+
+### Log Transformation linear Regression 
+
+After comparing with residual, we decide to use log1p transformation to adjust our model.  The log1p model as below:   
+
+
+***y_hat(suicides_100k_pop)  = 1.797 + (-0.02)Population + (-0.031)CPI_Index  +(-0.043)GDP_Rate +(-0.164)Unemployment_Rate +(4.025)Social_suport + (-1.814)Freedom_to_make_life_choices + (-0.65)Perceptions_of_corruption + (-0.938)confidence_in_national_government) +(0.189)Democratic_Quality)***
+
+
+The outcome of our model as following table shows that β6 = -1.814 will influence the suicides_100k_pop for a unit change of Freedom to make life choices, holding other predictors constant. This indicates negative relationship between Freedom_to_make_life_choices and Suicide_100k_pop which means one unit increase of Freedom_to_make_life_choices, Suicides_100k_pop will decrease 1.814 unit holding other predictors constant.  Also, we use null hypothesis test whether partial slope coefficient of “Freedom to make life choices” is statistically significant.  The p-value is smaller than 0.05.  The slope coefficient of “Freedom to make life choices” is statistically significant.   We can reject the null hypothesis β6 = 0.  It means that 95% confidence that the interval has contained the true values of population average.  5 % the average suicides_100k_pop in the rejected area.  “Democratic Quality” and “Social Support” also have the same situation.  Their p-value is also smaller than 0.05.  The slope coefficient of “Democratic Quality” and “Social Support” are statistically significant.  We can reject the null hypothesis β9 & β5  = 0.  95% confidence that the interval has contained the true values of population average. It has strongly evidence that these three predictors can control the suicides_100k_pop for a unit change. But the result has surprised us.  “Social support” increases one unit, Suicides_100k-pop will also increase 4.025 unit and “Democratic Quality” increase one unit, Suicides_100_pop will increase 0.189 unit. 
+
+
+```{r display log1p coefficient tibble, include = TRUE, echo=FALSE, warning=FALSE, message=FALSE, cache = TRUE, big.mark = ",", digits =2 }
+
+log1p_linear_suicides <- lm(log1p(Suicides_100k_pop) ~ log1p(Population) + log1p(CPI_Index)+log1p(GDP_Rate)+log1p(Unemployment_Rate)+log1p(Social_support)+log1p(Freedom_to_make_life_choices)+log1p(Perceptions_of_corruption)+log1p(Confidence_in_national_government)+log1p(Democratic_Quality), data = complete_join)
+
+dust(log1p_linear_suicides) %>% 
+  sprinkle(col = 2:4, round = 3) %>% 
+  sprinkle(col = 5, fn = quote(pvalString(value))) %>% 
+  sprinkle_colnames(term = "Term",
+                    estimate = "Estimate",
+                    std.error = "SE",
+                    statistic = "T-statistic",
+                    p.value = "P-value") %>% 
+  kable() %>% 
+  kable_styling()
+
+
+```
+
+
+
+### Correlation Plot
+
+
+We check our model whether it contains multicollinearity and heteroscedasticity in our data matrix scatterplot.  Look at the left-hand side of our data scatterplot.  We can see that the scatterplot does not have a cone-like shape which means these predictors are not heteroscedasticity. But the scatterplot shows some predictors have influence leverage points that influenced our fitted model direction such as the one approximately located at (50, -14), is on CPI_Index predictor axis with GDP_Rate axis because this point is far from other observation points and has an x-coordinate.  Also look at the right-hand side of our data using numbers to point out the relationship between our predictors.  The highest correlation is between Perceptions_of_corruption and confidence_in_national_government which has 0.68.  The second high correlation is between Perceptions_of_corruption and Freedom_to_make_life_choices which has 0.57.  Both are not very high.  Therefore, our model does not have multicollinearity. Checking correlation between each predictor can help our model prediction and analysis accurately.  
+
+
+
+```{r Matrix plot, include = TRUE,echo=FALSE, warning=FALSE, message=FALSE,cache = TRUE, fig.height = 10, fig.width =10, fig.align = "center"}
+
+panel.cor <- function(x, y, digits = 2, prefix = "", cex.cor, ...) {
+    usr <- par("usr")
+    on.exit(par(usr))
+    par(usr = c(0, 1, 0, 1))
+    Cor <- abs(cor(x, y)) 
+    txt <- paste0(prefix, format(c(Cor, 0.123456789), digits = digits)[1])
+    if(missing(cex.cor)) {
+        cex.cor <- 0.4 / strwidth(txt)
+    }
+    text(0.5, 0.5, txt,
+         cex = 1 + cex.cor * Cor) 
+}
+
+pairs(~Suicides_100k_pop + Population + CPI_Index + GDP_Rate + Unemployment_Rate + Social_support + Freedom_to_make_life_choices + Perceptions_of_corruption + Confidence_in_national_government + Democratic_Quality, data = complete_join,upper.panel = panel.cor, lower.panel = panel.smooth, cex.labels = 0.6, font.labels = 1 )
+
+      
+```
+
+
+
+### Variance Inflation Factor (VIF) 
+
+
+As per VIF for a regression model variable is equal to the ratio of the overall model variance. Thus we test Variance inflation factor to ensure our model does not have multicollinearity.  The outcome of VIF as the following table, we can see the range of VIF in our model is between 1 to 2.7. It is a very low outcome.  The highest one is “Perceptions of corruption”.  “Freedom to make life choices” and “Confidence in national government” are the same as 2.5.  This outcome is matching the outcome of the previous correlation plot.  We can be sure that our fitted model does not have Multicollinearity.  
+ 
+
+
+
+```{r display VIF tibble, include = TRUE, echo=FALSE, warning=FALSE, message=FALSE, cache = TRUE}
+
+log1p_linear_suicides <- lm(log1p(Suicides_100k_pop) ~ log1p(Population) + log1p(CPI_Index)+log1p(GDP_Rate)+log1p(Unemployment_Rate)+log1p(Social_support)+log1p(Freedom_to_make_life_choices)+log1p(Perceptions_of_corruption)+log1p(Confidence_in_national_government)+log1p(Democratic_Quality), data = complete_join)
+
+vif_log1p_linear <- car::vif(log1p_linear_suicides)
+
+vif_log1p_linear %>%
+  kbl(caption = "Variance Inflation Factor(VIF) table") %>%
+  kable_classic(full_width = FALSE, html_font = "Cambria")
+
+
+
+#knitr::kable(vif_log1p_linear)
+
+```
+
+```{r general plot, include = FALSE,echo=FALSE, warning=FALSE, message = FALSE,cache = TRUE, fig.height = 6 , fig.width = 8, fig.align = "center" }
+
+log1p_linear_suicides <- lm(log1p(Suicides_100k_pop) ~ log1p(Population) + log1p(CPI_Index)+log1p(GDP_Rate)+log1p(Unemployment_Rate)+log1p(Social_support)+log1p(Freedom_to_make_life_choices)+log1p(Perceptions_of_corruption)+log1p(Confidence_in_national_government)+log1p(Democratic_Quality), data = complete_join)
+
+
+par(mfrow = c(2,2))
+plot(log1p_linear_suicides)
+
+
+```
+
+
+### Residual
+
+
+In the following Component residual plots, we can see whether each predictor has a linear relationship to Suicides per 100k people.  The blue dash line is the best fit line.  The pink line is the residuals line.  We can indicate that GDP_Rate and Democratic_Quality do not have a linear relationship with Suicides per 100k people even though we have used log1p transformation regression.  Thus, we can indicate that both may influence our prediction the most.   
+
+
+
+```{r Residual plot, include = TRUE,echo=FALSE, warning=FALSE, message=FALSE, cache = TRUE, fig.height = 9, fig.width =9, fig.align = "center"}
+
+crPlots(log1p_linear_suicides)
+
+
+
+
+```
+
+### Decision Tree
+  
+ 
+We split the data 80/20, and use 80% of data to create a train set, and 20% to make predictions.  According to the test data set, we can see the overall probability of suicide is 4%.  If the sex is male, 50% of males will have a  suicide probability of 4%.  If Perception of Corruptions rate is smaller than 0.93, the chance of suicide is 2%.  If Perception of Corruptions rate is larger than 0.93, the change of suicide is also 2%.  If Democratic Quality rate is smaller than 0.75, the chance of suicide is 1%.  If it is larger than 0.75, the chance of suicide is 1%.  If Freedom to make life choice rate is larger than or equal to 0.68, the chance of suicide is 0.  Instead, if it is smaller than 0.68, the chance of suicide is 1%.  
+
+The decision tree model we build helps us identify the most important factors that affect suicide rate. Through the model, we can easily find out that people are highly valued “ perception of corruption”, “ democratic quality” and freedom to make life choices’ The ultimate goal of our predicting model is to detect and visualize the relationship/patterns among all the variables, as well as determine whether an event (Suicide Y/N) will occur or not.
+
+
+```{r Decision Tree code, include = TRUE, echo=FALSE, warning=FALSE, message=FALSE, cache = TRUE,fig.height = 7, fig.width = 7, fig.align = "center"}
+
+
+happiness_new<-complete_join%>%
+  mutate(complete_join,Suicide=ifelse(Suicides_100k_pop>50,'Yes','No'))
+
+clean_suicides<-happiness_new%>%
+  select(c(Confidence_in_national_government, Perceptions_of_corruption, Social_support ,Democratic_Quality, Freedom_to_make_life_choices, Sex, 'Suicide'))
+      
+T_glimpse <- glimpse(clean_suicides)
+
+#knitr::kable(T_glimpse)
+
+create_train_test<-function(data,size=0.8,train=TRUE){
+    n_row=nrow(data)
+    total_row=size*n_row
+    train_sample<-1:total_row
+    if(train==TRUE){
+      return(data[train_sample,])
+    } else{
+      return(data[-train_sample,])
+    }
+  }
+  
+data_train<-create_train_test(happiness_new,0.8,train=TRUE)
+
+data_test<-create_train_test(happiness_new,0.8,train=FALSE)
+  
+dim(data_train)
+
+#knitr::kable(data_train)
+
+
+fit<-rpart(Suicide~.,data=clean_suicides,method = 'class')
+  rpart.plot(fit,extra=111)
+
+
+```
+
+
+``` {r Prediction with Decision Tree, include = FALSE, echo=FALSE, warning=FALSE, message=FALSE, cache=TRUE}
+
+#Prediction
+  predict_unseen <-predict(fit, data_test, type = 'class')
+  table1 <- table(data_test$Suicide, predict_unseen)
+  
+  table1
+
+#Measurement Performance
+  accuracy_Test <- sum(diag(table1)) / sum(table1)
+  print(paste('Accuracy for test', accuracy_Test))
+
+```
+
+
+
+### Step-Wise Model
+ 
+ 
+Step-wise model which is a combination of forward and backward selection, consists of iteratively adding and removing predictors in our fitted model in order to find the subset of predictors in our data set resulting in the best performing model with lower prediction error.  After running the step-wise model, our best performing model is Population, CPI Index, Unemployment Rate, Social Support, Freedom to make life choices, Confidence in national government and Democratic Quality.  R squared is 0.084, Adj.R squared is 0.0829. all partial coefficient and p-value as below table.  The most influence is "Freedom to make life choice" to Suicides_100K_pop.  When "Freedom to make life choice" increases one unit, it controls Suicide_100k_pop decreases 18.714 units, holding other predictors constant.  This outcome is 2.46 times of "confidence in national government" decreasing.  Also, it is 88.27 times of "Unemployment Rate".  The table also reveals the p-value of all predictors are smaller than 0.05 which means all rejects the null hypothesis = 0, all slope coefficient are statistically significant.  It has strong evidence that these predictors can control the suicides_100k_pop for a unit change.  
+
+***y_hat(suicides_100k_pop)  = 9.558 + (0)Population + (0.374)CPI_Index  +(-0.212)Unemployment_Rate + (20.46)Social_suport + (-18.714)Freedom_to_make_life_choices +  (-7.592)confidence_in_national_government) +(5.597)Democratic_Quality)***
+
+
+```{r Step-wise Model,include = FALSE, echo=FALSE, warning=TRUE, cache = TRUE, message = FALSE}
+
+library(MASS)
+
+linear_suicides <- lm(Suicides_100k_pop ~ Population + CPI_Index + GDP_Rate + Unemployment_Rate + Social_support + Freedom_to_make_life_choices + Perceptions_of_corruption + Confidence_in_national_government+ Democratic_Quality, data = complete_join)
+
+step_wise_select_model <- stepAIC(linear_suicides, direction = "both", trace = FALSE)
+
+summary(step_wise_select_model)
+
+```
+
+
+```{r Step-wise model table,include = TRUE, echo=FALSE, warning=FALSE, cache = TRUE, message = FALSE }
+
+dust(step_wise_select_model) %>% 
+  sprinkle(col = 2:4, round = 3) %>% 
+  sprinkle(col = 5, fn = quote(pvalString(value))) %>% 
+  sprinkle_colnames(term = "Term",
+                    estimate = "Estimate",
+                    std.error = "SE",
+                    statistic = "T-statistic",
+                    p.value = "P-value") %>% 
+  kable() %>% 
+  kable_styling()
+
+
+```
+
+
+### Step-wise model density
+
+
+In the distribution of a standardized Residual plot with Suicides as below, shows that the distribution is not exactly a normal distribution and it has a little skewness.  But comparing with our model which didn’t do the log1p transformation, it is much closer to the population average N(0, 1).  This prediction model would be more accurate.
+
+
+```{r Step-wise model density plot,include = TRUE, echo=FALSE, warning=FALSE, cache = TRUE, message = FALSE, fig.height = 6, fig.width = 6, fig.align = "center" }
+
+library (MASS)
+
+# As we has conflict between library(MASS) and library(dplyr), we can not use select () in this case. So, we need to use different method to write density code in this case. 
+
+step_wise_model_lm <- lm(Suicides_100k_pop ~ Population + CPI_Index + Unemployment_Rate + Social_support + Freedom_to_make_life_choices + Confidence_in_national_government + Democratic_Quality, data = complete_join)
+
+sresid <- studres(step_wise_model_lm)
+hist(sresid, freq = FALSE,
+     main = "Distribution of Standardized Residuals")
+xfit <- seq(min(sresid), max(sresid), length = 60)
+yfit <- dnorm(xfit)
+lines(xfit, yfit)
+
+
+
+```
+
+### Conclusion
+
+In conclusion, our log1p regression model with low R square values can also be a good model.  It is because some field of study have an inherently greater amount of unexplainable variation such as confidence in national government, Freedom to make life choices, etc.  To explain human behavior generally is more difficult to predict than things that are physical.  At least in our model analysis and prediction, we have tried our best to analyze and predict using diversification to make the outcome accurate.  
+
+We find that global suicides are prone to males instead of females.  The age between 35-75 is the in most negative thinking.  They maybe faced with an enormous amount of pressure.  Our prediction reveals that freedom and confidence in national government are the most influenced subjects on people to have an contemplate suicide, instead of say related with economy.  Thus, we hope this result of suicide analysis and prediction could help some Governors’ awareness that the country’s wealth are their people.  If they live in the world feeling hopeless and helpless, no one will be willing to contribute their ability and knowledge to their country to build up a prosperous country.  
+
+
+
